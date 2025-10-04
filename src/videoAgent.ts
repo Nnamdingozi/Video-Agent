@@ -162,7 +162,6 @@
 
 
 // lib/ai/videoAgent.ts
-import 'dotenv/config';
 import { ElevenLabsClient } from 'elevenlabs';
 import ffmpeg from 'fluent-ffmpeg';
 import { promises as fs } from 'fs';
@@ -170,8 +169,8 @@ import path from 'path';
 import os from 'os';
 import { Readable } from 'stream';
 import fetch from 'node-fetch';
-import { createRequire } from 'module';
-import { createClient } from '@supabase/supabase-js'; // ✅ Import Supabase client
+import { createRequire } from 'module'; 
+import { createClient } from '@supabase/supabase-js';
 
 // --- Configuration ---
 const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });
@@ -179,14 +178,35 @@ const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
 if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
 
 // ✅ Use createRequire to safely import CommonJS packages in an ESM module
-const require = createRequire(import.meta.url);
-const ffmpegStatic = require('ffmpeg-static');
-const ffprobeStatic = require('ffprobe-static');
 
-// ✅ Configure fluent-ffmpeg to use the portable binaries
-ffmpeg.setFfmpegPath(ffmpegStatic);
-ffmpeg.setFfprobePath(ffprobeStatic.path);
-console.log("[FFMPEG CONFIG] Paths set successfully.");
+
+try {
+  const require = createRequire(import.meta.url);
+
+  // `require.resolve` gives the path to the main file of the package.
+  // For `ffmpeg-static`, this path IS the path to the executable.
+  const ffmpegPath = require.resolve('ffmpeg-static');
+
+  // For `ffprobe-static`, we need to find its entry point and then construct
+  // the path to the binary relative to it.
+  const ffprobePath = require('ffprobe-static').path; // The simpler require pattern works here as it's a property.
+
+  console.log(`[FFMPEG CONFIG] Resolved FFMPEG path: ${ffmpegPath}`);
+  console.log(`[FFMPEG CONFIG] Resolved FFPROBE path: ${ffprobePath}`);
+
+  if (!ffmpegPath) throw new Error("ffmpeg-static path could not be resolved.");
+  if (!ffprobePath) throw new Error("ffprobe-static path could not be resolved.");
+  
+  ffmpeg.setFfmpegPath(ffmpegPath);
+  ffmpeg.setFfprobePath(ffprobePath);
+  
+  console.log("[FFMPEG CONFIG] Paths set successfully.");
+
+} catch (error) {
+  console.error('[FFMPEG CONFIG] FATAL ERROR setting paths:', error);
+  // Throwing here will stop the server from starting if FFmpeg is not found, which is good.
+  throw error;
+}
 
 // ✅ Create a Supabase admin client for uploading to storage
 const supabaseAdmin = createClient(
