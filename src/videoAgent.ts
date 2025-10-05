@@ -48,7 +48,7 @@ try {
 
 // ✅ Create a Supabase admin client for uploading to storage
 const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! // Use the secure service role key
 );
 
