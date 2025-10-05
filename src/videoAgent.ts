@@ -8,7 +8,7 @@ import os from 'os';
 import { Readable } from 'stream';
 import fetch from 'node-fetch';
 import { createRequire } from 'module'; 
-import { createClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 
 // --- Configuration ---
 const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });
@@ -46,14 +46,13 @@ try {
   throw error;
 }
 
-// ✅ Create a Supabase admin client for uploading to storage
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use the secure service role key
-);
 
 // --- Main Function ---
-export async function generateVideoAndUpload(noteId: number, noteText: string, subjectName: string): Promise<string> {
+export async function generateVideoAndUpload(
+  supabaseAdmin: SupabaseClient, 
+  noteId: number, 
+  noteText: string, 
+  subjectName: string): Promise<string> {
   console.log("--- 🎬 VIDEO AGENT STARTED ---");
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-video-'));
   console.log(`[LOG] Created temporary directory: ${tempDir}`);
@@ -167,7 +166,7 @@ export async function generateVideoAndUpload(noteId: number, noteText: string, s
     if (videoBuffer.length === 0) throw new Error("FFmpeg produced an empty video file.");
 
     // ✅ Upload to Supabase and return the public URL
-    const publicUrl = await uploadVideoToSupabase(noteId, videoBuffer);
+    const publicUrl = await uploadVideoToSupabase(supabaseAdmin, noteId, videoBuffer);
     return publicUrl;
 
   } finally {
@@ -177,7 +176,7 @@ export async function generateVideoAndUpload(noteId: number, noteText: string, s
 }
 
 // --- Helper: Upload to Supabase Storage ---
-async function uploadVideoToSupabase(noteId: number, videoBuffer: Buffer): Promise<string> {
+async function uploadVideoToSupabase(supabaseAdmin: SupabaseClient, noteId: number, videoBuffer: Buffer): Promise<string> {
   const filePath = `note-videos/${noteId}.mp4`;
   console.log(`[SUPABASE] Uploading video to: ${filePath}`);
 
