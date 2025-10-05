@@ -11,9 +11,7 @@ import { createRequire } from 'module';
 import { SupabaseClient } from '@supabase/supabase-js';
 
 // --- Configuration ---
-const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });
-const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
-if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
+
 
 // ✅ Use createRequire to safely import CommonJS packages in an ESM module
 
@@ -53,7 +51,12 @@ export async function generateVideoAndUpload(
   noteId: number, 
   noteText: string, 
   subjectName: string): Promise<string> {
+
   console.log("--- 🎬 VIDEO AGENT STARTED ---");
+
+const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });
+const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
+if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-video-'));
   console.log(`[LOG] Created temporary directory: ${tempDir}`);
 
