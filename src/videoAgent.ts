@@ -54,7 +54,6 @@ export async function generateVideoAndUpload(
 
   console.log("--- 🎬 VIDEO AGENT STARTED ---");
 
-const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });
 const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
 if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-video-'));
@@ -70,22 +69,73 @@ if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
       const sceneText = scenes[i].trim();
 
       // --- Audio (ElevenLabs) ---
-      const audioPath = path.join(tempDir, `scene_${i}.mp3`);
-      try {
-        console.log(`   🎤 Calling ElevenLabs API...`);
-        const audioStream = await elevenlabs.textToSpeech.convert(
-          "21m00Tcm4TlvDq8ikWAM",
-          { text: sceneText, model_id: "eleven_multilingual_v2" }
-        );
-        const chunks: Buffer[] = [];
-        for await (const chunk of audioStream as Readable) chunks.push(chunk);
-        await fs.writeFile(audioPath, Buffer.concat(chunks));
-        console.log(`   ✅ Audio saved.`);
-      } catch (error) {
-        console.error("   ❌ ERROR during ElevenLabs audio generation:", error);
-        throw error;
-      }
+       // --- Generate Audio with ElevenLabs (using a direct fetch call) ---
+  const audioPath = path.join(tempDir, `scene_${i}.mp3`);
+  try {
+    console.log(`   🎤 Calling ElevenLabs API directly...`);
 
+    // ✅ THE DEFINITIVE FIX:
+    // We construct the request manually, exactly as the docs specify.
+    // This removes the SDK as a point of failure.
+
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      throw new Error("FATAL: ELEVENLABS_API_KEY is not defined in the environment.");
+    }
+    
+    // Debug log to prove the key is being read
+    console.log(`   Using ElevenLabs API Key that starts with: ${apiKey.substring(0, 5)}`);
+
+    const voiceId = "21m00Tcm4TlvDq8ikWAM"; // "Rachel"
+    const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
+
+    const response = await fetch(ttsUrl, {
+      method: 'POST',
+      headers: {
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey, // This is the required header name
+      },
+      body: JSON.stringify({
+        text: sceneText,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+        },
+      }),
+    });
+
+    if (response.status === 401) {
+        console.error("   ❌ ERROR: ElevenLabs API returned 401 Unauthorized. This definitively means the API key is invalid or your account has an issue (e.g., quota exceeded, requires payment method). Please regenerate your key and check your account status on the ElevenLabs website.");
+        throw new Error("ElevenLabs authentication failed with a 401 status.");
+    }
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorBody}`);
+    }
+
+    // The response body is a Readable stream.
+    const audioStream = response.body;
+
+    if (!audioStream) {
+        throw new Error("ElevenLabs API did not return an audio stream.");
+    }
+    
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream as Readable) {
+      chunks.push(chunk as Buffer);
+    }
+    const audioBuffer = Buffer.concat(chunks);
+
+    await fs.writeFile(audioPath, audioBuffer);
+    console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
+
+  } catch (error) {
+    console.error("   ❌ ERROR during ElevenLabs audio generation:", error);
+    throw error;
+  }
       // --- Image (Hugging Face) ---
       const imagePath = path.join(tempDir, `scene_${i}.png`);
       try {
