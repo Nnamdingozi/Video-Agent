@@ -1,20 +1,27 @@
 
 // lib/ai/videoAgent.ts
 import { ElevenLabsClient } from 'elevenlabs';
+import { Readable } from 'stream';
+import fetch from 'node-fetch';
+import 'dotenv/config';
+import axios from 'axios'; // ✅ Import axios
 import ffmpeg from 'fluent-ffmpeg';
+import { createRequire } from 'module';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { Readable } from 'stream';
-import fetch from 'node-fetch';
-import { createRequire } from 'module'; 
 import { SupabaseClient } from '@supabase/supabase-js';
 
 // --- Configuration ---
+const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
+const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY!; // ✅ Use a clear variable name
+
+if (!huggingFaceToken || !elevenLabsApiKey) {
+  throw new Error("Missing HUGGINGFACE_API_TOKEN or ELEVENLABS_API_KEY");
+}
 
 
 // ✅ Use createRequire to safely import CommonJS packages in an ESM module
-
 
 try {
   const require = createRequire(import.meta.url);
@@ -68,74 +75,77 @@ if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
     for (let i = 0; i < scenes.length; i++) {
       const sceneText = scenes[i].trim();
 
-      // --- Audio (ElevenLabs) ---
-       // --- Generate Audio with ElevenLabs (using a direct fetch call) ---
-  const audioPath = path.join(tempDir, `scene_${i}.mp3`);
-  try {
-    console.log(`   🎤 Calling ElevenLabs API directly...`);
+// --- Generate Audio with ElevenLabs ---
+const audioPath = path.join(tempDir, `scene_${i}.mp3`);
+try {
+  console.log(`   🎤 Calling ElevenLabs API with Axios for scene: "${sceneText}"`);
+  
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    throw new Error("FATAL: ELEVENLABS_API_KEY is not defined in the environment.");
+  }
+  
+  const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Voice ID for "Rachel"
+  const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
 
-    // ✅ THE DEFINITIVE FIX:
-    // We construct the request manually, exactly as the docs specify.
-    // This removes the SDK as a point of failure.
-
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    if (!apiKey) {
-      throw new Error("FATAL: ELEVENLABS_API_KEY is not defined in the environment.");
-    }
-    
-    // Debug log to prove the key is being read
-    console.log(`   Using ElevenLabs API Key that starts with: ${apiKey.substring(0, 5)}`);
-
-    const voiceId = "21m00Tcm4TlvDq8ikWAM"; // "Rachel"
-    const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
-
-    const response = await fetch(ttsUrl, {
-      method: 'POST',
+  const response = await axios.post(
+    ttsUrl,
+    {
+      text: sceneText,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+      },
+    },
+    {
       headers: {
         'Accept': 'audio/mpeg',
         'Content-Type': 'application/json',
-        'xi-api-key': apiKey, // This is the required header name
+        'xi-api-key': apiKey,
       },
-      body: JSON.stringify({
-        text: sceneText,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-        },
-      }),
-    });
-
-    if (response.status === 401) {
-        console.error("   ❌ ERROR: ElevenLabs API returned 401 Unauthorized. This definitively means the API key is invalid or your account has an issue (e.g., quota exceeded, requires payment method). Please regenerate your key and check your account status on the ElevenLabs website.");
-        throw new Error("ElevenLabs authentication failed with a 401 status.");
+      // Crucial: Tell Axios to handle the response as a stream
+      responseType: 'stream',
     }
+  );
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`ElevenLabs API failed with status ${response.status}: ${errorBody}`);
-    }
+  // `response.data` is the Readable stream from Axios
+  const audioStream = response.data as Readable;
 
-    // The response body is a Readable stream.
-    const audioStream = response.body;
-
-    if (!audioStream) {
-        throw new Error("ElevenLabs API did not return an audio stream.");
-    }
-    
-    const chunks: Buffer[] = [];
-    for await (const chunk of audioStream as Readable) {
+  // This is the modern, promise-based way to consume a stream into a buffer.
+  // It's the replacement for the confusing .pipe() and writer events.
+  const chunks: Buffer[] = [];
+  for await (const chunk of audioStream) {
       chunks.push(chunk as Buffer);
-    }
-    const audioBuffer = Buffer.concat(chunks);
-
-    await fs.writeFile(audioPath, audioBuffer);
-    console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
-
-  } catch (error) {
-    console.error("   ❌ ERROR during ElevenLabs audio generation:", error);
-    throw error;
   }
+  const audioBuffer = Buffer.concat(chunks);
+
+  if (audioBuffer.length === 0) {
+      throw new Error("ElevenLabs returned an empty audio stream.");
+  }
+
+  // Write the complete buffer to the file in one single, await-able step.
+  await fs.writeFile(audioPath, audioBuffer);
+  
+  console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
+
+} catch (error: any) {
+  console.error("   ❌ ERROR during ElevenLabs audio generation:");
+  // This provides detailed error information if the Axios call fails
+  if (error.response) {
+    console.error(`     - Status: ${error.response.status}`);
+    // The error data from ElevenLabs is often a stream, so we try to read it
+    const errorData = await new Promise((resolve) => {
+        let data = '';
+        error.response.data.on('data', (chunk: Buffer) => data += chunk.toString());
+        error.response.data.on('end', () => resolve(data));
+    });
+    console.error("     - Response Body:", errorData);
+  } else {
+    console.error("     - Error Message:", error.message);
+  }
+  throw new Error("Failed during audio generation step.");
+}
       // --- Image (Hugging Face) ---
       const imagePath = path.join(tempDir, `scene_${i}.png`);
       try {
