@@ -1,9 +1,9 @@
 
 // lib/ai/videoAgent.ts
+import { ElevenLabsClient } from 'elevenlabs';
 import { Readable } from 'stream';
 import fetch from 'node-fetch';
 import 'dotenv/config';
-import axios from 'axios'; // ✅ Import axios
 import ffmpeg from 'fluent-ffmpeg';
 import { createRequire } from 'module';
 import { promises as fs } from 'fs';
@@ -13,9 +13,9 @@ import { SupabaseClient } from '@supabase/supabase-js';
 
 // --- Configuration ---
 const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
-const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY!; // ✅ Use a clear variable name
+const elevenlabs = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY! });// ✅ Use a clear variable name
 
-if (!huggingFaceToken || !elevenLabsApiKey) {
+if (!huggingFaceToken) {
   throw new Error("Missing HUGGINGFACE_API_TOKEN or ELEVENLABS_API_KEY");
 }
 
@@ -75,76 +75,38 @@ if (!huggingFaceToken) throw new Error("Missing HUGGINGFACE_API_TOKEN");
       const sceneText = scenes[i].trim();
 
 // --- Generate Audio with ElevenLabs ---
-const audioPath = path.join(tempDir, `scene_${i}.mp3`);
-try {
-  console.log(`   🎤 Calling ElevenLabs API with Axios for scene: "${sceneText}"`);
-  
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) {
-    throw new Error("FATAL: ELEVENLABS_API_KEY is not defined in the environment.");
-  }
-  
-  const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Voice ID for "Rachel"
-  const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
+      // --- Audio (ElevenLabs) ---
+      const audioPath = path.join(tempDir, `scene_${i}.mp3`);
+      try {
+        console.log(`   🎤 Calling ElevenLabs SDK with .convertAsStream() for scene: "${sceneText}"`);
+        
+        // ✅ THE DEFINITIVE FIX: Using the exact pattern that you found works.
+        const audioStream = await elevenlabs.textToSpeech.convertAsStream(
+          "21m00Tcm4TlvDq8ikWAM", // voice_id
+          { 
+            text: sceneText, 
+            model_id: "eleven_multilingual_v2" 
+          }
+        );
 
-  const response = await axios.post(
-    ttsUrl,
-    {
-      text: sceneText,
-      model_id: "eleven_multilingual_v2",
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-      },
-    },
-    {
-      headers: {
-        'Accept': 'audio/mpeg',
-        'Content-Type': 'application/json',
-        'xi-api-key': apiKey,
-      },
-      // Crucial: Tell Axios to handle the response as a stream
-      responseType: 'stream',
-    }
-  );
+        const chunks: Buffer[] = [];
+        for await (const chunk of audioStream as Readable) {
+          chunks.push(chunk);
+        }
+        const audioBuffer = Buffer.concat(chunks);
+        
+        if (audioBuffer.length === 0) throw new Error("ElevenLabs SDK returned an empty audio stream.");
 
-  // `response.data` is the Readable stream from Axios
-  const audioStream = response.data as Readable;
+        await fs.writeFile(audioPath, audioBuffer);
+        console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
 
-  // This is the modern, promise-based way to consume a stream into a buffer.
-  // It's the replacement for the confusing .pipe() and writer events.
-  const chunks: Buffer[] = [];
-  for await (const chunk of audioStream) {
-      chunks.push(chunk as Buffer);
-  }
-  const audioBuffer = Buffer.concat(chunks);
-
-  if (audioBuffer.length === 0) {
-      throw new Error("ElevenLabs returned an empty audio stream.");
-  }
-
-  // Write the complete buffer to the file in one single, await-able step.
-  await fs.writeFile(audioPath, audioBuffer);
-  
-  console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
-
-} catch (error: any) {
-  console.error("   ❌ ERROR during ElevenLabs audio generation:");
-  // This provides detailed error information if the Axios call fails
-  if (error.response) {
-    console.error(`     - Status: ${error.response.status}`);
-    // The error data from ElevenLabs is often a stream, so we try to read it
-    const errorData = await new Promise((resolve) => {
-        let data = '';
-        error.response.data.on('data', (chunk: Buffer) => data += chunk.toString());
-        error.response.data.on('end', () => resolve(data));
-    });
-    console.error("     - Response Body:", errorData);
-  } else {
-    console.error("     - Error Message:", error.message);
-  }
-  throw new Error("Failed during audio generation step.");
-}
+      } catch (error: any) {
+        console.error("   ❌ ERROR during ElevenLabs SDK audio generation:", error);
+        if (error.statusCode === 401) {
+            throw new Error("ElevenLabs authentication failed (401). Please check the API key on your Render server.");
+        }
+        throw new Error(`ElevenLabs SDK failed: ${error.message}`);
+      }
       // --- Image (Hugging Face) ---
       const imagePath = path.join(tempDir, `scene_${i}.png`);
       try {
