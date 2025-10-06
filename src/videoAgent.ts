@@ -548,7 +548,8 @@ export async function generateVideoAndUpload(
       const audioPath = path.join(tempDir, `scene_${i}.mp3`);
       try {
         console.log(`   🎤 Calling Hugging Face TTS API for scene: "${sceneText}"`);
-        const ttsModelEndpoint = "https://api-inference.huggingface.co/models/microsoft/speecht5_tts";
+        const ttsModelEndpoint = "https://api-inference.huggingface.co/models/espnet/kan-bayashi_ljspeech_vits";
+        
         
         const fetchOptions = {
           method: 'POST',
