@@ -1,6 +1,5 @@
 
 // lib/ai/videoAgent.ts
-import { ElevenLabsClient } from 'elevenlabs';
 import { Readable } from 'stream';
 import fetch from 'node-fetch';
 import 'dotenv/config';
