@@ -504,12 +504,17 @@ import path from 'path';
 import os from 'os';
 import { SupabaseClient } from '@supabase/supabase-js';
 import fetch from 'node-fetch';
+import OpenAI from 'openai';
 
 // --- Configuration ---
 const huggingFaceToken = process.env.HUGGINGFACE_API_TOKEN!;
 if (!huggingFaceToken) {
   throw new Error("Missing HUGGINGFACE_API_TOKEN environment variable.");
 }
+
+// ✅ Initialize the OpenAI client
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); 
+
 
 const require = createRequire(import.meta.url);
 const ffmpegStatic = require('ffmpeg-static');
@@ -544,51 +549,31 @@ export async function generateVideoAndUpload(
       const sceneText = scenes[i].trim();
       console.log(`\n--- [SCENE ${i + 1}/${scenes.length}] START ---`);
 
-      // --- Generate Audio with Hugging Face Inference API ---
-      const audioPath = path.join(tempDir, `scene_${i}.mp3`);
-      try {
-        console.log(`   🎤 Calling Hugging Face TTS API for scene: "${sceneText}"`);
-        const ttsModelEndpoint = "https://api-inference.huggingface.co/models/espnet/kan-bayashi_ljspeech_vits";
-        
-        
-        const fetchOptions = {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${huggingFaceToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: sceneText,
-            options: {
-              speaker_embeddings: "https://huggingface.co/datasets/Matthijs/cmu-arctic-xvectors/resolve/main/cmu_us_slt_arctic-xvectors.pt"
-            }
-          }),
-        };
-
-        let response = await fetch(ttsModelEndpoint, fetchOptions);
-
-        // ✅ FIX: Implement the same robust retry logic for audio.
-        if (response.status === 503) {
-          console.log("   ⏳ TTS Model is loading, retrying in 20 seconds...");
-          await new Promise(resolve => setTimeout(resolve, 20000));
-          response = await fetch(ttsModelEndpoint, fetchOptions);
+        // --- ✅ Generate Audio with OpenAI TTS ---
+        const audioPath = path.join(tempDir, `scene_${i}.mp3`);
+        try {
+          console.log(`   🎤 Calling OpenAI TTS API for scene: "${sceneText}"`);
+          
+          const mp3 = await openai.audio.speech.create({
+            model: "tts-1", // High-quality, fast model
+            voice: "nova",   // A professional and clear female voice
+            input: sceneText,
+          });
+  
+          // The response is a stream. Convert it to a buffer.
+          const audioBuffer = Buffer.from(await mp3.arrayBuffer());
+  
+          if (audioBuffer.length === 0) {
+              throw new Error("OpenAI TTS API returned an empty audio file.");
+          }
+  
+          await fs.writeFile(audioPath, audioBuffer);
+          console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
+  
+        } catch (error) {
+          console.error("   ❌ ERROR during OpenAI audio generation:", error);
+          throw error;
         }
-
-        if (!response.ok) {
-          const errorBody = await response.text();
-          throw new Error(`Hugging Face TTS API failed with status ${response.status}: ${errorBody}`);
-        }
-        
-        const audioBuffer = await response.buffer();
-        if (audioBuffer.length === 0) throw new Error("Hugging Face TTS API returned an empty audio file.");
-
-        await fs.writeFile(audioPath, audioBuffer);
-        console.log(`   ✅ Audio saved to ${audioPath} (${audioBuffer.length} bytes)`);
-
-      } catch (error) {
-        console.error("   ❌ ERROR during Hugging Face audio generation:", error);
-        throw error;
-      }
 
       // --- Image Generation (Hugging Face) ---
       const imagePath = path.join(tempDir, `scene_${i}.png`);
